@@ -1,0 +1,104 @@
+menu "User Configuration"
+
+    menu "WiFi Configuration"
+
+        config WIFI_SSID
+            string "WiFi SSID"
+            default "myssid"
+            help
+                SSID used by ConnectToWifi().
+
+        config WIFI_PASSWORD
+            string "WiFi Password"
+            default "mypassword"
+            help
+                Password used by ConnectToWifi().
+
+    endmenu
+
+    config BROKER_URL
+        string "Broker URL"
+        default "mqtt://mqtt.eclipseprojects.io"
+        help
+            URL of the broker to connect to
+
+    menu "MQTT Configuration"
+
+        config MQTT_USERNAME
+            string "MQTT Username"
+            default ""
+            help
+                Username used by MQTT client authentication.
+
+        config MQTT_PASSWORD
+            string "MQTT Password"
+            default ""
+            help
+                Password used by MQTT client authentication.
+
+    endmenu
+
+    menu "SNTP Configuration"
+
+        config SNTP_TIMEZONE
+            string "SNTP Timezone"
+            default "CST-8"
+            help
+                POSIX timezone string used by setenv("TZ", ...).
+
+        config SNTP_SERVER_0
+            string "SNTP Server 0"
+            default "ntp1.aliyun.com"
+            help
+                Primary SNTP server.
+
+        config SNTP_SERVER_1
+            string "SNTP Server 1"
+            default "cn.pool.ntp.org"
+            help
+                Secondary SNTP server.
+
+        config SNTP_MAX_RETRIES
+            int "SNTP Max Retries"
+            range 1 60
+            default 15
+            help
+                Maximum retries while waiting SNTP synchronization.
+
+        config SNTP_RETRY_DELAY_MS
+            int "SNTP Retry Delay (ms)"
+            range 100 10000
+            default 2000
+            help
+                Delay between SNTP sync retries.
+
+    endmenu
+
+    config BROKER_URL_FROM_STDIN
+        bool
+        default y if BROKER_URL = "FROM_STDIN"
+
+    menu "Pressure Sensor BLE"
+
+        config PRESSURE_SENSOR1_BLE_ADDR
+            string "Pressure Sensor 1 MAC"
+            default ""
+            help
+                BLE MAC address of pressure sensor #1, format: AA:BB:CC:DD:EE:FF
+
+        config PRESSURE_SENSOR2_BLE_ADDR
+            string "Pressure Sensor 2 MAC"
+            default ""
+            help
+                BLE MAC address of pressure sensor #2, format: AA:BB:CC:DD:EE:FF
+
+        config PRESSURE_SENSOR_BLE_POLL_INTERVAL_MS
+            int "Pressure Sensor Poll Interval (ms)"
+            range 100 10000
+            default 1000
+            help
+                Poll interval used by ESP32 to read pressure characteristic from connected BLE sensors.
+
+    endmenu
+
+endmenu

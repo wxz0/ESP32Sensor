@@ -1,0 +1,25 @@
+# Build
+build/
+
+# Managed components (auto-downloaded)
+managed_components/
+
+# IDE / Editor
+.vscode/
+.idea/
+.claude/
+.clangd
+
+# ESP-IDF
+sdkconfig.old
+dependencies.lock
+*.bin
+*.elf
+*.map
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev container
+.devcontainer/
