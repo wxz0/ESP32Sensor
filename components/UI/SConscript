@@ -1,0 +1,13 @@
+import os
+
+cwd = os.getcwd()
+src = Glob('*.c')
+
+for root, dirs, files in os.walk(cwd):
+    for dir in dirs:
+        # Use "relative" path (to "SConscript") instead of full path,
+        # so that subdirectory compiled output file under "variant_dir"
+        subdir = os.path.join(root, dir).replace(f"{os.path.join(cwd)}/", "")
+        src += Glob(os.path.join(subdir, "*.c"))
+
+Return('src')

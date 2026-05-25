@@ -110,11 +110,11 @@ static void *master_handle = NULL;
 
 // Enumeration of modbus device addresses accessed by master device
 enum {
-    MB_Water_Quality_DEVICE_ADDR1 = 1,
-    MB_Light_DEVICE_ADDR1 = 2,
-    MB_Light_DEVICE_ADDR2 = 3,
-    MB_Light_DEVICE_ADDR3 = 4,
-    MB_Light_DEVICE_ADDR4 = 5
+    MB_Light_DEVICE_ADDR1 = 1,
+    MB_Light_DEVICE_ADDR2 = 2,
+    MB_Light_DEVICE_ADDR3 = 3,
+    MB_Light_DEVICE_ADDR4 = 4,
+    MB_Water_Quality_DEVICE_ADDR1 = 5,
 };
 
 // Enumeration of all supported CIDs for device (used in parameter definition table)
@@ -131,6 +131,10 @@ enum {
     CID_CALIB_PH_401, // 对应寄存器 0x16
     CID_CALIB_PH_686, // 对应寄存器 0x17
     CID_CALIB_PH_918, // 对应寄存器 0x18
+    CID_CALIB_EC_1413, // 对应寄存器 0x19
+    CID_CALIB_EC_1288, // 对应寄存器 0x1A
+    CID_CALIB_EC_1113, // 对应寄存器 0x1B
+    CID_CALIB_ORP_256, // 对应寄存器 0x1C
     CID_LIGHT_1,
     CID_LIGHT_2,
     CID_LIGHT_3,
@@ -190,6 +194,22 @@ const mb_parameter_descriptor_t device_parameters[] = {
             OPTS(0,0, 0 ), PAR_PERMS_READ },
     { CID_CALIB_PH_918, STR("Cal_Ph_9.18"), STR(""), MB_Water_Quality_DEVICE_ADDR1, MB_PARAM_HOLDING,
             0x18,1,
+            0, PARAM_TYPE_U16, 2,
+            OPTS(0,0, 0 ), PAR_PERMS_READ },
+    { CID_CALIB_EC_1413, STR("Cal_EC_1413"), STR(""), MB_Water_Quality_DEVICE_ADDR1, MB_PARAM_HOLDING,
+            0x19,1,
+            0, PARAM_TYPE_U16, 2,
+            OPTS(0,0, 0 ), PAR_PERMS_READ },
+    { CID_CALIB_EC_1288, STR("Cal_EC_1288"), STR(""), MB_Water_Quality_DEVICE_ADDR1, MB_PARAM_HOLDING,
+            0x1A,1,
+            0, PARAM_TYPE_U16, 2,
+            OPTS(0,0, 0 ), PAR_PERMS_READ },
+    { CID_CALIB_EC_1113, STR("Cal_EC_1113"), STR(""), MB_Water_Quality_DEVICE_ADDR1, MB_PARAM_HOLDING,
+            0x1B,1,
+            0, PARAM_TYPE_U16, 2,
+            OPTS(0,0, 0 ), PAR_PERMS_READ },
+    { CID_CALIB_ORP_256, STR("Cal_ORP_256"), STR(""), MB_Water_Quality_DEVICE_ADDR1, MB_PARAM_HOLDING,
+            0x1C,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ },
     { CID_LIGHT_1, STR("Light1/Lux"), STR(""), MB_Light_DEVICE_ADDR1, MB_PARAM_INPUT,
@@ -506,7 +526,7 @@ esp_err_t light_sensor_read_all(LightSensorData_t *out_data)
 //     }    
 
 // }
-static esp_err_t perform_ph_calibration_logic(uint16_t cid, const char* desc)
+static esp_err_t perform_calibration_logic(uint16_t cid, const char* desc)
 {
     if (master_handle == NULL) return ESP_ERR_INVALID_STATE;
 
@@ -545,17 +565,37 @@ static esp_err_t perform_ph_calibration_logic(uint16_t cid, const char* desc)
 esp_err_t water_sensor_calib_ph_4_01(void)
 {
     // 对应 0x16 寄存器
-    return perform_ph_calibration_logic(CID_CALIB_PH_401, "PH 4.01");
+    return perform_calibration_logic(CID_CALIB_PH_401, "PH 4.01");
 }
 
 esp_err_t water_sensor_calib_ph_6_86(void)
 {
     // 对应 0x17 寄存器
-    return perform_ph_calibration_logic(CID_CALIB_PH_686, "PH 6.86");
+    return perform_calibration_logic(CID_CALIB_PH_686, "PH 6.86");
 }
 
 esp_err_t water_sensor_calib_ph_9_18(void)
 {
     // 对应 0x18 寄存器
-    return perform_ph_calibration_logic(CID_CALIB_PH_918, "PH 9.18");
+    return perform_calibration_logic(CID_CALIB_PH_918, "PH 9.18");
+}
+
+esp_err_t water_sensor_calib_ec_1413(void)
+{
+    return perform_calibration_logic(CID_CALIB_EC_1413, "EC 1413");
+}
+
+esp_err_t water_sensor_calib_ec_1288(void)
+{
+    return perform_calibration_logic(CID_CALIB_EC_1288, "EC 1288");
+}
+
+esp_err_t water_sensor_calib_ec_1113(void)
+{
+    return perform_calibration_logic(CID_CALIB_EC_1113, "EC 1113");
+}
+
+esp_err_t water_sensor_calib_orp_256(void)
+{
+    return perform_calibration_logic(CID_CALIB_ORP_256, "ORP 256");
 }

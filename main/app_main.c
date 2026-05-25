@@ -11,6 +11,7 @@
 #include "KEY.h"
 #include "Timestamp.h"
 #include "App_Tasks.h"
+#include "LCD_Driver.h"
 
 #include "sdkconfig.h"
 
@@ -34,7 +35,6 @@ static const char *TAG = "Lab_Sensor";
 
 void app_main(void)
 {
-
   ESP_LOGI(TAG, "[APP] Startup..");
   ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
   ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -49,9 +49,10 @@ void app_main(void)
   KEY_Init();
 
   ConnectToWifi(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
-  ConnectToMqtt(CONFIG_BROKER_URL, CONFIG_MQTT_USERNAME, CONFIG_MQTT_PASSWORD);
-  SNTP_Sync_Time();
+  // ConnectToMqtt(CONFIG_BROKER_URL, CONFIG_MQTT_USERNAME, CONFIG_MQTT_PASSWORD);
+  //SNTP_Sync_Time();
 
-  App_Create_Task();
-  
+  LCD_Driver_Init();
+
+  App_Create_Task();  
 }

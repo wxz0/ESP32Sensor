@@ -1,5 +1,6 @@
 # Name,   Type, SubType, Offset,  Size,   Flags
-# Custom table for larger single-app image.
-nvs,      data, nvs,     ,        0x6000,
-phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, ,        0x200000,
+# ESP32-N16R8: 16MB Flash, 8MB SPIRAM
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x400000,
+fat_data, data, fat,     ,        0xB00000,

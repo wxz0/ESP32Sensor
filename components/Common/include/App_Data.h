@@ -57,7 +57,8 @@ typedef enum
 {
   KEY1 = 1,
   KEY2,
-  KEY3
+  KEY3,
+  KEY4
 }KEY_x;
 
 /*传感器消息类型枚举*/

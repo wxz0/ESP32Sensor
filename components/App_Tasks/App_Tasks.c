@@ -17,6 +17,7 @@
 #include "Timestamp.h"
 
 #include "App_Tasks.h"
+#include "LCD_Driver.h"
 
 #define MQTT_WATER_DATA_PUBLISH_TOPIC "sensors/water"
 #define MQTT_LIGHT_DATA_PUBLISH_TOPIC "sensors/light"
@@ -32,18 +33,46 @@
 #define LCD_TASK_PRIORITY 5
 
 #define SENSOR_QUEUE_LENGTH 16
+#define UI_EVENT_QUEUE_LENGTH 8
 
 static const char *TAG = "Lab_Sensor";
+
+/* Calibration command types */
+typedef enum {
+    CALIB_EC_1413 = 0,
+    CALIB_EC_1288,
+    CALIB_EC_1113,
+    CALIB_PH_401,
+    CALIB_PH_686,
+    CALIB_PH_918,
+    CALIB_ORP_256,
+} CalibCmd_t;
+
+/* UI event types */
+typedef enum {
+    UI_EVENT_CALIBRATION,
+    UI_EVENT_SCREEN_SWITCH,
+} UiEventType_t;
+
+/* Unified UI event */
+typedef struct {
+    UiEventType_t type;
+    union {
+        CalibCmd_t calib_cmd;
+    };
+} UiEvent_t;
 
 static TaskHandle_t WaterQuality_Sensor_Task_Handle = NULL;
 static TaskHandle_t Light_Sensor_Task_Handle = NULL;
 static TaskHandle_t Upload_Data_Task_Handle = NULL;
 static TaskHandle_t Key_Task_Handle = NULL;
-// static TaskHandle_t LCD_Task_Handle = NULL;
+static TaskHandle_t LCD_Task_Handle = NULL;
 
 static QueueHandle_t Ui_Data_Queue = NULL;
 static QueueHandle_t Mqtt_Data_Queue = NULL;
+static QueueHandle_t Ui_Event_Queue = NULL;
 static QueueHandle_t s_pressure_queues[2] = {NULL, NULL};
+static volatile bool s_calib_running = false;
 
 static void PressureSensor_Data_Callback(uint8_t sensor_index, const PressureSensorData_t *data, void *user_ctx)
 {
@@ -134,65 +163,155 @@ static void LightSensor_Task(void *pvParameters)
 static void Key_Task(void *pvParameters)
 {
     KEY_x Keynum = 0;
+    int ec_idx = 0;   /* cycles: 0=1413, 1=1288, 2=1113 */
+    int ph_idx = 0;   /* cycles: 0=4.01, 1=6.86, 2=9.18 */
+    static const CalibCmd_t ec_cmds[] = { CALIB_EC_1413, CALIB_EC_1288, CALIB_EC_1113 };
+    static const CalibCmd_t ph_cmds[] = { CALIB_PH_401, CALIB_PH_686, CALIB_PH_918 };
+    static const char *ec_names[] = { "EC 1413", "EC 1288", "EC 1113" };
+    static const char *ph_names[] = { "PH 4.01", "PH 6.86", "PH 9.18" };
+
     while (1)
     {
         Keynum = KEY_GetNum();
-        if (Keynum != 0)
+        if (Keynum == KEY1)
         {
-            ESP_LOGI(TAG, "检测到按键按下，按键编号：%d", Keynum);
+            UiEvent_t evt = { .type = UI_EVENT_CALIBRATION, .calib_cmd = ec_cmds[ec_idx] };
+            ESP_LOGI(TAG, "KEY1: 触发 %s 校准", ec_names[ec_idx]);
+            ec_idx = (ec_idx + 1) % 3;
+            xQueueSend(Ui_Event_Queue, &evt, 0);
         }
-
+        else if (Keynum == KEY2)
+        {
+            UiEvent_t evt = { .type = UI_EVENT_CALIBRATION, .calib_cmd = ph_cmds[ph_idx] };
+            ESP_LOGI(TAG, "KEY2: 触发 %s 校准", ph_names[ph_idx]);
+            ph_idx = (ph_idx + 1) % 3;
+            xQueueSend(Ui_Event_Queue, &evt, 0);
+        }
+        else if (Keynum == KEY3)
+        {
+            UiEvent_t evt = { .type = UI_EVENT_CALIBRATION, .calib_cmd = CALIB_ORP_256 };
+            ESP_LOGI(TAG, "KEY3: 触发 ORP 256 校准");
+            xQueueSend(Ui_Event_Queue, &evt, 0);
+        }
+        else if (Keynum == KEY4)
+        {
+            UiEvent_t evt = { .type = UI_EVENT_SCREEN_SWITCH };
+            ESP_LOGI(TAG, "KEY4: 切换屏幕");
+            xQueueSend(Ui_Event_Queue, &evt, 0);
+        }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
-// static void LCD_Task(void *pvParameters)
-// {
-//     SensorMessage_t msg = {0};
-//     WaterQualityData_t water_data = {0};
-//     LightSensorData_t light_data = {0};
-//     PressureSensorData_t pressure1_data = {0};
-//     PressureSensorData_t pressure2_data = {0};
-//     bool has_water_data = false;
-//     bool has_light_data = false;
-//     bool has_pressure1_data = false;
-//     bool has_pressure2_data = false;
+/* Calibration task: runs in background, blocks for 40s, then returns to main screen */
+static void Calib_Task(void *pvParameters)
+{
+    CalibCmd_t cmd = *(CalibCmd_t *)pvParameters;
+    free(pvParameters);
 
-//     while (1)
-//     {
-//         while (xQueueReceive(Ui_Data_Queue, &msg, 0) == pdTRUE)
-//         {
-//             if (msg.type == SENSOR_MSG_WATER)
-//             {
-//                 water_data = msg.data.water;
-//                 has_water_data = true;
-//             }
-//             else if (msg.type == SENSOR_MSG_LIGHT)
-//             {
-//                 light_data = msg.data.light;
-//                 has_light_data = true;
-//             }
-//             else if (msg.type == SENSOR_MSG_PRESSURE1)
-//             {
-//                 pressure1_data = msg.data.pressure;
-//                 has_pressure1_data = true;
-//             }
-//             else if (msg.type == SENSOR_MSG_PRESSURE2)
-//             {
-//                 pressure2_data = msg.data.pressure;
-//                 has_pressure2_data = true;
-//             }
-//         }
+    static const char *names[] = {
+        "EC 1413", "EC 1288", "EC 1113",
+        "PH 4.01", "PH 6.86", "PH 9.18",
+        "ORP 256"
+    };
 
-//         lcd_ui_update_sensor_data(has_water_data ? &water_data : NULL,
-//                                   has_light_data ? &light_data : NULL,
-//                                   has_pressure1_data ? &pressure1_data : NULL,
-//                                   has_pressure2_data ? &pressure2_data : NULL);
-//         lcd_ui_process();
-//         lv_timer_handler();
-//         vTaskDelay(pdMS_TO_TICKS(10));
-//     }
-// }
+    typedef esp_err_t (*calib_func_t)(void);
+    static const calib_func_t funcs[] = {
+        water_sensor_calib_ec_1413,
+        water_sensor_calib_ec_1288,
+        water_sensor_calib_ec_1113,
+        water_sensor_calib_ph_4_01,
+        water_sensor_calib_ph_6_86,
+        water_sensor_calib_ph_9_18,
+        water_sensor_calib_orp_256,
+    };
+
+    ESP_LOGI(TAG, "校准任务启动: %s", names[cmd]);
+    lcd_show_calibration(names[cmd]);
+
+    esp_err_t ret = funcs[cmd]();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "校准 %s 失败: %s", names[cmd], esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "校准 %s 完成", names[cmd]);
+    }
+
+    s_calib_running = false;
+    lcd_switch_to_main();
+    vTaskDelete(NULL);
+}
+
+static void LCD_Task(void *pvParameters)
+{
+    SensorMessage_t msg = {0};
+    WaterQualityData_t water_data = {0};
+    LightSensorData_t light_data = {0};
+    PressureSensorData_t pressure1_data = {0};
+    PressureSensorData_t pressure2_data = {0};
+    bool has_water_data = false;
+    bool has_light_data = false;
+    bool has_pressure1_data = false;
+    bool has_pressure2_data = false;
+
+    bool showing_main = true;
+
+    lcd_switch_to_main();
+
+    while (1)
+    {
+        /* Process UI events (calibration + screen switch) */
+        UiEvent_t ui_evt;
+        if (!s_calib_running && xQueueReceive(Ui_Event_Queue, &ui_evt, 0) == pdTRUE) {
+            if (ui_evt.type == UI_EVENT_CALIBRATION) {
+                CalibCmd_t *cmd_copy = malloc(sizeof(CalibCmd_t));
+                if (cmd_copy != NULL) {
+                    *cmd_copy = ui_evt.calib_cmd;
+                    s_calib_running = true;
+                    xTaskCreatePinnedToCore(Calib_Task, "Calib_Task", 4096, cmd_copy,
+                                            SENSOR_TASK_PRIORITY + 1, NULL, 1);
+                }
+            } else if (ui_evt.type == UI_EVENT_SCREEN_SWITCH) {
+                showing_main = !showing_main;
+                if (showing_main) {
+                    lcd_switch_to_main();
+                } else {
+                    lcd_switch_to_light();
+                }
+            }
+        }
+
+        /* Process sensor data queue */
+        while (xQueueReceive(Ui_Data_Queue, &msg, 0) == pdTRUE)
+        {
+            if (msg.type == SENSOR_MSG_WATER)
+            {
+                water_data = msg.data.water;
+                has_water_data = true;
+            }
+            else if (msg.type == SENSOR_MSG_LIGHT)
+            {
+                light_data = msg.data.light;
+                has_light_data = true;
+            }
+            else if (msg.type == SENSOR_MSG_PRESSURE1)
+            {
+                pressure1_data = msg.data.pressure;
+                has_pressure1_data = true;
+            }
+            else if (msg.type == SENSOR_MSG_PRESSURE2)
+            {
+                pressure2_data = msg.data.pressure;
+                has_pressure2_data = true;
+            }
+        }
+
+        lcd_ui_update_sensor_data(has_water_data ? &water_data : NULL,
+                                  has_light_data ? &light_data : NULL,
+                                  has_pressure1_data ? &pressure1_data : NULL,
+                                  has_pressure2_data ? &pressure2_data : NULL);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 static void Upload_Data_Task(void *pvParameters)
 {
@@ -262,7 +381,9 @@ void App_Create_Task(void)
 {
     Ui_Data_Queue = xQueueCreate(SENSOR_QUEUE_LENGTH, sizeof(SensorMessage_t));
     Mqtt_Data_Queue = xQueueCreate(SENSOR_QUEUE_LENGTH, sizeof(SensorMessage_t));
-    if (Ui_Data_Queue != NULL && Mqtt_Data_Queue != NULL)
+    Ui_Event_Queue = xQueueCreate(UI_EVENT_QUEUE_LENGTH, sizeof(UiEvent_t));
+
+    if (Ui_Data_Queue != NULL && Mqtt_Data_Queue != NULL && Ui_Event_Queue != NULL)
     {
         ESP_LOGI(TAG, "传感器消息队列创建成功");
     }
@@ -273,46 +394,48 @@ void App_Create_Task(void)
 
     s_pressure_queues[0] = Ui_Data_Queue;
     s_pressure_queues[1] = Mqtt_Data_Queue;
-    if (PressureSensor_RegisterDataCallback(PressureSensor_Data_Callback, s_pressure_queues) == ESP_OK)
-    {
-        ESP_LOGI(TAG, "压力传感器回调注册成功");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "压力传感器回调注册失败");
-    }
+    KEY_Init();
 
-    xTaskCreatePinnedToCore((TaskFunction_t)&WaterQuality_Sensor_Task,
-                            (const char * const)"Sensor_Task",
-                            (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-                            (void * const)NULL,
-                            (UBaseType_t)SENSOR_TASK_PRIORITY,
-                            (TaskHandle_t * const)&WaterQuality_Sensor_Task_Handle,
-                            (const BaseType_t)1);
-    if (WaterQuality_Sensor_Task_Handle != NULL)
-    {
-        ESP_LOGI(TAG, "水质传感器任务创建成功");
-    }
-    else
-    {
-        ESP_LOGI(TAG, "水质传感器任务创建失败");
-    }
+    // if (PressureSensor_RegisterDataCallback(PressureSensor_Data_Callback, s_pressure_queues) == ESP_OK)
+    // {
+    //     ESP_LOGI(TAG, "压力传感器回调注册成功");
+    // }
+    // else
+    // {
+    //     ESP_LOGE(TAG, "压力传感器回调注册失败");
+    // }
 
-    xTaskCreatePinnedToCore((TaskFunction_t)&LightSensor_Task,
-                            (const char * const)"Light_Task",
-                            (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-                            (void * const)NULL,
-                            (UBaseType_t)SENSOR_TASK_PRIORITY,
-                            (TaskHandle_t * const)&Light_Sensor_Task_Handle,
-                            (const BaseType_t)1);
-    if (Light_Sensor_Task_Handle != NULL)
-    {
-        ESP_LOGI(TAG, "光强传感器任务创建成功");
-    }
-    else
-    {
-        ESP_LOGI(TAG, "光强传感器任务创建失败");
-    }
+    // xTaskCreatePinnedToCore((TaskFunction_t)&WaterQuality_Sensor_Task,
+    //                         (const char * const)"Sensor_Task",
+    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+    //                         (void * const)NULL,
+    //                         (UBaseType_t)SENSOR_TASK_PRIORITY,
+    //                         (TaskHandle_t * const)&WaterQuality_Sensor_Task_Handle,
+    //                         (const BaseType_t)1);
+    // if (WaterQuality_Sensor_Task_Handle != NULL)
+    // {
+    //     ESP_LOGI(TAG, "水质传感器任务创建成功");
+    // }
+    // else
+    // {
+    //     ESP_LOGI(TAG, "水质传感器任务创建失败");
+    // }
+
+    // xTaskCreatePinnedToCore((TaskFunction_t)&LightSensor_Task,
+    //                         (const char * const)"Light_Task",
+    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+    //                         (void * const)NULL,
+    //                         (UBaseType_t)SENSOR_TASK_PRIORITY,
+    //                         (TaskHandle_t * const)&Light_Sensor_Task_Handle,
+    //                         (const BaseType_t)1);
+    // if (Light_Sensor_Task_Handle != NULL)
+    // {
+    //     ESP_LOGI(TAG, "光强传感器任务创建成功");
+    // }
+    // else
+    // {
+    //     ESP_LOGI(TAG, "光强传感器任务创建失败");
+    // }
 
     xTaskCreatePinnedToCore((TaskFunction_t)&Key_Task,
                             (const char * const)"Key_Task",
@@ -330,35 +453,35 @@ void App_Create_Task(void)
         ESP_LOGI(TAG, "按键任务创建失败");
     }
 
-    // xTaskCreatePinnedToCore((TaskFunction_t)&LCD_Task,
-    //                         (const char * const)"LCD_Task",
-    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-    //                         (void * const)NULL,
-    //                         (UBaseType_t)LCD_TASK_PRIORITY,
-    //                         (TaskHandle_t * const)&LCD_Task_Handle,
-    //                         (const BaseType_t)1);
-    // if (LCD_Task_Handle != NULL)
-    // {
-    //     ESP_LOGI(TAG, "LCD任务创建成功");
-    // }
-    // else
-    // {
-    //     ESP_LOGI(TAG, "LCD任务创建失败");
-    // }
-
-    xTaskCreatePinnedToCore((TaskFunction_t)&Upload_Data_Task,
-                            (const char * const)"Upload_Data_Task",
+    xTaskCreatePinnedToCore((TaskFunction_t)&LCD_Task,
+                            (const char * const)"LCD_Task",
                             (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
                             (void * const)NULL,
-                            (UBaseType_t)UPLOAD_TASK_PRIORITY,
-                            (TaskHandle_t * const)&Upload_Data_Task_Handle,
+                            (UBaseType_t)LCD_TASK_PRIORITY,
+                            (TaskHandle_t * const)&LCD_Task_Handle,
                             (const BaseType_t)0);
-    if (Upload_Data_Task_Handle != NULL)
+    if (LCD_Task_Handle != NULL)
     {
-        ESP_LOGI(TAG, "上报数据任务创建成功");
+        ESP_LOGI(TAG, "LCD任务创建成功");
     }
     else
     {
-        ESP_LOGI(TAG, "上报数据任务创建失败");
+        ESP_LOGI(TAG, "LCD任务创建失败");
     }
+
+    // xTaskCreatePinnedToCore((TaskFunction_t)&Upload_Data_Task,
+    //                         (const char * const)"Upload_Data_Task",
+    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+    //                         (void * const)NULL,
+    //                         (UBaseType_t)UPLOAD_TASK_PRIORITY,
+    //                         (TaskHandle_t * const)&Upload_Data_Task_Handle,
+    //                         (const BaseType_t)0);
+    // if (Upload_Data_Task_Handle != NULL)
+    // {
+    //     ESP_LOGI(TAG, "上报数据任务创建成功");
+    // }
+    // else
+    // {
+    //     ESP_LOGI(TAG, "上报数据任务创建失败");
+    // }
 }

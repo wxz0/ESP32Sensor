@@ -16,5 +16,10 @@ esp_err_t water_sensor_calib_ph_6_86(void);
 
 esp_err_t water_sensor_calib_ph_9_18(void);
 
+esp_err_t water_sensor_calib_ec_1413(void);
+esp_err_t water_sensor_calib_ec_1288(void);
+esp_err_t water_sensor_calib_ec_1113(void);
+esp_err_t water_sensor_calib_orp_256(void);
+
 esp_err_t read_light_address(uint8_t light_adr[]);
 #endif
