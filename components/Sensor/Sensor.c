@@ -316,10 +316,10 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
     memset(out_data, 0, sizeof(WaterQualityData_t));
     // --- 开始读取并转换 ---
 
-    // 1. 温度 (原始值 / 100)
+    // 1. 温度 (原始值 / 10)
     if (read_param_u16(CID_TEMP_C, &raw_u16) == ESP_OK) 
     {
-        out_data->temp = (float)raw_u16 / 100.0f;
+        out_data->temp = (float)raw_u16 / 10.0f;
     } 
     else 
     {

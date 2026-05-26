@@ -1,5 +1,12 @@
 idf_component_register(
     SRCS "LCD_Driver.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_lcd lvgl__lvgl driver UI Common freertos
+    REQUIRES
+        Common
+        UI
+        driver
+        esp_lcd
+        esp_timer
+        freertos
+        lvgl__lvgl
 )

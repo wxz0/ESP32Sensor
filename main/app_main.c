@@ -12,6 +12,7 @@
 #include "Timestamp.h"
 #include "App_Tasks.h"
 #include "LCD_Driver.h"
+#include "Usb_Storage.h"
 
 #include "sdkconfig.h"
 
@@ -53,6 +54,7 @@ void app_main(void)
   //SNTP_Sync_Time();
 
   LCD_Driver_Init();
+  Usb_Storage_Init();
 
   App_Create_Task();  
 }

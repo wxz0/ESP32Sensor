@@ -7,40 +7,40 @@ menu "LCD Display Configuration"
             range 2 3
 
         config LCD_PIN_SCK
-            int "SPI SCL (Clock) GPIO"
+            int "SPI SCK GPIO"
             default 12
 
         config LCD_PIN_MOSI
-            int "SPI SDA (MOSI) GPIO"
+            int "SPI MOSI GPIO"
             default 11
     endmenu
 
     menu "LCD Control Pins"
         config LCD_PIN_CS
-            int "LCD CS (Chip Select) GPIO"
+            int "LCD CS GPIO"
             default 10
 
         config LCD_PIN_DC
-            int "LCD DC (Data/Command) GPIO"
+            int "LCD DC GPIO"
             default 5
 
         config LCD_PIN_RST
-            int "LCD RST (Reset) GPIO"
+            int "LCD RST GPIO"
             default 4
     endmenu
 
     menu "LCD Parameters"
         config LCD_H_RES
-            int "Horizontal resolution (pixels)"
+            int "Horizontal resolution"
             default 240
 
         config LCD_V_RES
-            int "Vertical resolution (pixels)"
+            int "Vertical resolution"
             default 320
 
         config LCD_SPI_CLOCK_HZ
-            int "SPI clock frequency (Hz)"
-            default 80000000
+            int "SPI clock frequency"
+            default 40000000
 
         config LCD_SPI_CMD_BITS
             int "SPI command bits"
@@ -51,30 +51,23 @@ menu "LCD Display Configuration"
             default 8
     endmenu
 
-    menu "LVGL Configuration"
+    menu "LVGL Task"
         config LVGL_TASK_PRIORITY
             int "LVGL task priority"
-            default 5
+            default 4
 
         config LVGL_TASK_STACK_SIZE
-            int "LVGL task stack size (bytes)"
+            int "LVGL task stack size"
             default 8192
 
         config LVGL_TASK_CORE
-            int "LVGL task core affinity (0 or 1)"
+            int "LVGL task core"
             default 1
+            range 0 1
 
         config LVGL_TICK_PERIOD_MS
-            int "LVGL tick period (ms)"
-            default 5
-
-        config LVGL_MAX_HOR_RES
-            int "Maximum horizontal resolution"
-            default 240
-
-        config LVGL_MAX_VER_RES
-            int "Maximum vertical resolution"
-            default 320
+            int "LVGL tick period ms"
+            default 2
     endmenu
 
 endmenu
