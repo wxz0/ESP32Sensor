@@ -84,7 +84,7 @@ water_sensor_read_all(&Sensor_data);
 
 转换规则：
 
-- 温度：`raw / 100`
+- 温度：`raw / 10`
 - PH：`raw / 100`
 - TDS：`U32` 直接值
 - ORP：`(int16_t)raw`

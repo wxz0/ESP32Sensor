@@ -1,6 +1,6 @@
 #include "LCD_Driver.h"
 
-#include <assert.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +10,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -58,6 +59,7 @@ extern lv_obj_t *screen_show_2_label_lux_data;
 static esp_lcd_panel_handle_t s_panel = NULL;
 static lv_display_t *s_display = NULL;
 static SemaphoreHandle_t s_lvgl_mutex = NULL;
+static bool s_lcd_ready = false;
 
 static bool lcd_flush_done_cb(esp_lcd_panel_io_handle_t panel_io,
                               esp_lcd_panel_io_event_data_t *edata,
@@ -72,6 +74,12 @@ static bool lcd_flush_done_cb(esp_lcd_panel_io_handle_t panel_io,
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
+    (void)disp;
+    if(s_panel == NULL) {
+        lv_display_flush_ready(s_display);
+        return;
+    }
+
     lv_draw_sw_rgb565_swap(px_map, lv_area_get_size(area));
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel,
                                               area->x1,
@@ -100,19 +108,33 @@ static void lvgl_task(void *arg)
     }
 }
 
-static void lcd_lock(void)
+static bool lcd_lock(void)
 {
-    xSemaphoreTake(s_lvgl_mutex, portMAX_DELAY);
+    if(!s_lcd_ready || s_lvgl_mutex == NULL) {
+        return false;
+    }
+    return xSemaphoreTake(s_lvgl_mutex, portMAX_DELAY) == pdTRUE;
 }
 
 static void lcd_unlock(void)
 {
-    xSemaphoreGive(s_lvgl_mutex);
+    if(s_lvgl_mutex != NULL) {
+        xSemaphoreGive(s_lvgl_mutex);
+    }
 }
 
-void LCD_Driver_Init(void)
+bool LCD_Driver_IsReady(void)
+{
+    return s_lcd_ready;
+}
+
+esp_err_t LCD_Driver_Init(void)
 {
     ESP_LOGI(TAG, "Initialize LCD");
+
+    if(s_lcd_ready) {
+        return ESP_OK;
+    }
 
     spi_host_device_t spi_host = (CONFIG_LCD_SPI_HOST == 2) ? SPI2_HOST : SPI3_HOST;
     spi_bus_config_t bus_cfg = {
@@ -121,9 +143,13 @@ void LCD_Driver_Init(void)
         .miso_io_num = -1,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = CONFIG_LCD_H_RES * 40 * sizeof(lv_color_t),
+        .max_transfer_sz = CONFIG_LCD_H_RES * 10 * sizeof(lv_color_t),
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(spi_host, &bus_cfg, SPI_DMA_CH_AUTO));
+    esp_err_t ret = spi_bus_initialize(spi_host, &bus_cfg, SPI_DMA_CH_AUTO);
+    if(ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_cfg = {
@@ -136,16 +162,22 @@ void LCD_Driver_Init(void)
         .lcd_param_bits = CONFIG_LCD_SPI_PARAM_BITS,
         .on_color_trans_done = lcd_flush_done_cb,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)spi_host,
-                                             &io_cfg,
-                                             &io));
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)spi_host, &io_cfg, &io);
+    if(ret != ESP_OK) {
+        ESP_LOGE(TAG, "LCD panel IO create failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = CONFIG_LCD_PIN_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io, &panel_cfg, &s_panel));
+    ret = esp_lcd_new_panel_st7789(io, &panel_cfg, &s_panel);
+    if(ret != ESP_OK) {
+        ESP_LOGE(TAG, "LCD panel create failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
@@ -155,13 +187,35 @@ void LCD_Driver_Init(void)
     lv_init();
 
     s_lvgl_mutex = xSemaphoreCreateMutex();
-    assert(s_lvgl_mutex != NULL);
+    if(s_lvgl_mutex == NULL) {
+        ESP_LOGE(TAG, "LVGL mutex create failed");
+        return ESP_ERR_NO_MEM;
+    }
 
-    size_t draw_buf_size = CONFIG_LCD_H_RES * 40 * sizeof(lv_color_t);
-    lv_color_t *draw_buf = heap_caps_malloc(draw_buf_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    assert(draw_buf != NULL);
+    const uint16_t candidate_lines[] = {10};
+    size_t draw_buf_size = 0;
+    lv_color_t *draw_buf = NULL;
+    for(size_t i = 0; i < sizeof(candidate_lines) / sizeof(candidate_lines[0]); i++) {
+        draw_buf_size = CONFIG_LCD_H_RES * candidate_lines[i] * sizeof(lv_color_t);
+        draw_buf = heap_caps_malloc(draw_buf_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if(draw_buf != NULL) {
+            if(candidate_lines[i] != 40) {
+                ESP_LOGW(TAG, "LCD draw buffer reduced to %u lines", candidate_lines[i]);
+            }
+            break;
+        }
+    }
+    if(draw_buf == NULL) {
+        ESP_LOGE(TAG, "LCD draw buffer allocation failed; free heap=%" PRIu32,
+                 esp_get_free_heap_size());
+        return ESP_ERR_NO_MEM;
+    }
 
     s_display = lv_display_create(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
+    if(s_display == NULL) {
+        ESP_LOGE(TAG, "LVGL display create failed");
+        return ESP_ERR_NO_MEM;
+    }
     lv_display_set_color_format(s_display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(s_display, lvgl_flush_cb);
     lv_display_set_buffers(s_display, draw_buf, NULL, draw_buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
@@ -174,9 +228,12 @@ void LCD_Driver_Init(void)
     ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, CONFIG_LVGL_TICK_PERIOD_MS * 1000));
 
-    lcd_lock();
-    setupUi();
-    lcd_unlock();
+    s_lcd_ready = true;
+
+    if(lcd_lock()) {
+        setupUi();
+        lcd_unlock();
+    }
 
     xTaskCreatePinnedToCore(lvgl_task,
                             "lvgl_task",
@@ -187,11 +244,14 @@ void LCD_Driver_Init(void)
                             CONFIG_LVGL_TASK_CORE);
 
     ESP_LOGI(TAG, "LCD ready: %dx%d", CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
+    return ESP_OK;
 }
 
 void lcd_switch_to_main(void)
 {
-    lcd_lock();
+    if(!lcd_lock()) {
+        return;
+    }
     if(screen_data_show_1 == NULL) {
         setup_screen_data_show_1();
     }
@@ -201,7 +261,9 @@ void lcd_switch_to_main(void)
 
 void lcd_switch_to_light(void)
 {
-    lcd_lock();
+    if(!lcd_lock()) {
+        return;
+    }
     if(screen_show_2 == NULL) {
         setup_screen_show_2();
     }
@@ -247,8 +309,10 @@ void lcd_ui_update_sensor_data(const WaterQualityData_t *water,
                                const PressureSensorData_t *press1,
                                const PressureSensorData_t *press2)
 {
-    lcd_lock();
-
+    if(!lcd_lock()) {
+        return;
+    }
+    
     if(press1 != NULL) {
         update_label_float(screen_data_show_1_label_pressure1_data, "%.0f", press1->pressure_cur);
     }
@@ -280,7 +344,9 @@ void lcd_ui_update_sensor_data(const WaterQualityData_t *water,
 
 void lcd_show_calibration(const char *name)
 {
-    lcd_lock();
+    if(!lcd_lock()) {
+        return;
+    }
 
     if(name != NULL && strncmp(name, "PH", 2) == 0) {
         if(screen_wait_ph_correct == NULL) {
@@ -342,7 +408,9 @@ void lcd_update_calibration_status(const char *name,
 
     snprintf(time_text, sizeof(time_text), "%d s left", remaining_sec);
 
-    lcd_lock();
+    if(!lcd_lock()) {
+        return;
+    }
     if(name_label != NULL && name != NULL) {
         lv_label_set_text(name_label, name);
     }

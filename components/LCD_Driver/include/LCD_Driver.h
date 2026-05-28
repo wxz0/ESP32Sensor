@@ -3,9 +3,11 @@
 
 #include <stdbool.h>
 
+#include "esp_err.h"
 #include "App_Data.h"
 
-void LCD_Driver_Init(void);
+esp_err_t LCD_Driver_Init(void);
+bool LCD_Driver_IsReady(void);
 void lcd_switch_to_main(void);
 void lcd_switch_to_light(void);
 void lcd_show_calibration(const char *name);

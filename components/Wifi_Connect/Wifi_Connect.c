@@ -1,128 +1,213 @@
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "Wifi_Connect.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include "esp_wifi.h"
-#include "nvs_flash.h"
 
+#include "Wifi_Connect.h"
+#include "esp_bus.h"
+#include "esp_err.h"
+#include "esp_littlefs.h"
 #include "esp_log.h"
+#include "esp_wifi_manager.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "Wifi_Connect";
-uint8_t Wifi_Connect_State = 0; // 0: 未连接，1：已连接
-/*
- ** @brief WiFi事件处理函数
- ** @param handler_args 事件处理函数参数
- ** @param base 事件基础
- ** @param event_id 事件ID
- ** @param event_data 事件数据
 
-*/
-static void wifi_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+static bool s_wifi_manager_started = false;
+static uint8_t s_wifi_connected = 0;
+static TaskHandle_t s_wifi_reconnect_task_handle = NULL;
+
+static void wifi_reconnect_task(void *arg)
 {
-    if(base == WIFI_EVENT)
-    {
-        switch (event_id)
-        {
-            case WIFI_EVENT_STA_START:
-                esp_wifi_connect();
-                ESP_LOGI(TAG,"wifi已启动,正在尝试连接到路由器");
-                break;
-            case WIFI_EVENT_STA_CONNECTED:
-                ESP_LOGI(TAG,"wifi已连接");
-                Wifi_Connect_State = 1;
-                break;
-            case WIFI_EVENT_STA_DISCONNECTED:
-                Wifi_Connect_State = 0;
-                esp_wifi_connect();
-                ESP_LOGW(TAG,"wifi断开连接");
-                break;
-        }
-    }
-    else if(base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t*)event_data;
-        char ip[16];
-        esp_ip4addr_ntoa(&event->ip_info.ip,ip,sizeof(ip));
-        ESP_LOGI(TAG,"WiFi连接成功，获取到ip地址为：%s",ip);
-    }
+    (void)arg;
 
+    while (1) {
+        if (s_wifi_manager_started && !Wifi_IS_Connected()) {
+            ESP_LOGI(TAG, "WiFi disconnected, retry saved networks while AP portal is active");
+            esp_err_t ret = wifi_manager_connect(NULL);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "WiFi reconnect request failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(15000));
+    }
 }
 
-void Wifi_Init()
+static esp_err_t wifi_littlefs_init(void)
 {
-  esp_err_t ret = nvs_flash_init();                            // 尝试初始化NVS
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-  {  
-    // 如果NVS分区有问题，就擦除并重新初始化
-    ESP_ERROR_CHECK(nvs_flash_erase());                     // 擦除NVS分区
-    ESP_ERROR_CHECK(nvs_flash_init());                      // 重新初始化NVS
-  }
-  /*初始化TCP/IP网络栈*/
-  ESP_ERROR_CHECK(esp_netif_init());
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = "/littlefs",
+        .partition_label = "storage",
+        .format_if_mount_failed = true,
+        .dont_mount = false,
+    };
 
-  /*创建默认的事件循环*/
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LittleFS mount failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-  /*创建默认的STA接口*/
-  esp_netif_create_default_wifi_sta();
+    size_t total = 0;
+    size_t used = 0;
+    ret = esp_littlefs_info("storage", &total, &used);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "LittleFS mounted: %u/%u bytes used",
+                 (unsigned int)used, (unsigned int)total);
+    }
 
-  /*初始化wifi驱动*/
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    return ESP_OK;
+}
 
-  /*注册事件处理函数*/
-  ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                      ESP_EVENT_ANY_ID,
-                                                      &wifi_event_handler,
+static void wifi_manager_event_handler(const char *event, const void *data, size_t len, void *ctx)
+{
+    (void)len;
+    (void)ctx;
+
+    if (strcmp(event, WIFI_EVT(WIFI_MGR_EVT_CONNECTED)) == 0) {
+        const wifi_connected_t *info = (const wifi_connected_t *)data;
+        s_wifi_connected = 1;
+        ESP_LOGI(TAG, "WiFi connected: ssid=%s rssi=%d channel=%u",
+                 info->ssid, info->rssi, info->channel);
+    } else if (strcmp(event, WIFI_EVT(WIFI_MGR_EVT_DISCONNECTED)) == 0) {
+        const wifi_disconnected_t *info = (const wifi_disconnected_t *)data;
+        s_wifi_connected = 0;
+        ESP_LOGW(TAG, "WiFi disconnected: ssid=%s reason=%u", info->ssid, info->reason);
+        if (s_wifi_reconnect_task_handle != NULL) {
+            xTaskNotifyGive(s_wifi_reconnect_task_handle);
+        }
+    } else if (strcmp(event, WIFI_EVT(WIFI_MGR_EVT_GOT_IP)) == 0) {
+        wifi_status_t status;
+        if (wifi_manager_get_status(&status) == ESP_OK) {
+            s_wifi_connected = 1;
+            ESP_LOGI(TAG, "WiFi got IP: %s, web UI: http://%s/", status.ip, status.ip);
+        }
+    }
+}
+
+void Wifi_Init(void)
+{
+    if (s_wifi_manager_started) {
+        ESP_LOGW(TAG, "WiFi manager already started");
+        return;
+    }
+
+    esp_err_t ret = wifi_littlefs_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Custom WebUI unavailable, WiFi Manager will use embedded UI if enabled");
+    }
+
+    ret = esp_bus_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "esp_bus init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    esp_bus_sub(WIFI_EVT(WIFI_MGR_EVT_CONNECTED), wifi_manager_event_handler, NULL);
+    esp_bus_sub(WIFI_EVT(WIFI_MGR_EVT_DISCONNECTED), wifi_manager_event_handler, NULL);
+    esp_bus_sub(WIFI_EVT(WIFI_MGR_EVT_GOT_IP), wifi_manager_event_handler, NULL);
+
+    wifi_manager_config_t config = {
+        .max_retry_per_network = 3,
+        .retry_interval_ms = 5000,
+        .auto_reconnect = true,
+        .default_ap = {
+            .ssid = "LabSensor-{id}",
+            .password = "",
+            .channel = 0,
+            .max_connections = 4,
+            .ip = "192.168.4.1",
+            .netmask = "255.255.255.0",
+            .gateway = "192.168.4.1",
+            .dhcp_start = "192.168.4.2",
+            .dhcp_end = "192.168.4.20",
+        },
+        .enable_captive_portal = true,
+        .stop_ap_on_connect = true,
+        .http = {
+            .enable = true,
+            .api_base_path = "/api/wifi",
+            .enable_auth = false,
+        },
+        .mdns = {
+            .enable = true,
+            .hostname = "labsensor-{id}",
+        },
+    };
+
+    ret = wifi_manager_init(&config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "WiFi manager init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    s_wifi_manager_started = true;
+    s_wifi_connected = wifi_manager_is_connected() ? 1 : 0;
+
+    if (s_wifi_reconnect_task_handle == NULL) {
+        BaseType_t task_ret = xTaskCreatePinnedToCore(wifi_reconnect_task,
+                                                      "wifi_reconnect",
+                                                      3072,
                                                       NULL,
-                                                      NULL));
-  /*设置wifi工作模式为STA*/
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-  
-  ESP_LOGI(TAG,"wifi STA初始化完成");
-  
+                                                      3,
+                                                      &s_wifi_reconnect_task_handle,
+                                                      0);
+        if (task_ret != pdPASS) {
+            ESP_LOGW(TAG, "Failed to create WiFi reconnect task");
+            s_wifi_reconnect_task_handle = NULL;
+        }
+    }
+
+    ESP_LOGI(TAG, "WiFi AP config portal ready");
+    ESP_LOGI(TAG, "If not connected, join AP 'LabSensor-XXXXXX' and open http://192.168.4.1/");
 }
 
 uint8_t Wifi_IS_Connected(void)
 {
-    return Wifi_Connect_State;
+    if (s_wifi_manager_started) {
+        s_wifi_connected = wifi_manager_is_connected() ? 1 : 0;
+    }
+    return s_wifi_connected;
 }
 
 void Wait_Wifi_Connected(void)
 {
-  uint8_t Try_Times = 0;
-  for(Try_Times = 0; Try_Times < 5; Try_Times++)
-  {
-    ESP_LOGI(TAG,"等待WiFi连接...");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    if(Wifi_IS_Connected() == 1)
-    {
-       break;
+    if (!s_wifi_manager_started) {
+        ESP_LOGW(TAG, "WiFi manager is not started");
+        return;
     }
-  }      
-  ESP_LOGI(TAG,"WiFi已连接");
+
+    if (!Wifi_IS_Connected()) {
+        esp_err_t connect_ret = wifi_manager_connect(NULL);
+        if (connect_ret != ESP_OK) {
+            ESP_LOGW(TAG, "WiFi connect request failed: %s", esp_err_to_name(connect_ret));
+        }
+    }
+
+    esp_err_t ret = wifi_manager_wait_connected(30000);
+    if (ret == ESP_OK) {
+        s_wifi_connected = 1;
+        ESP_LOGI(TAG, "WiFi connected");
+    } else {
+        s_wifi_connected = 0;
+        ESP_LOGW(TAG, "WiFi not connected yet; AP portal remains available at http://192.168.4.1/");
+    }
 }
 
-
-void ConnectToWifi(const char* WIFI_SSID, const char* WIFI_PASW)
+void ConnectToWifi(const char *WIFI_SSID, const char *WIFI_PASW)
 {
-  /*设置wifi连接参数*/
-   wifi_config_t wifi_config = {0};
-   wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-   
-   // 复制SSID到数组
-   strncpy((char *)wifi_config.sta.ssid, (const char *)WIFI_SSID, sizeof(wifi_config.sta.ssid) - 1);
-   wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
-   
-   // 复制密码到数组
-   strncpy((char *)wifi_config.sta.password, (const char *)WIFI_PASW, sizeof(wifi_config.sta.password) - 1);
-   wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
-   
-  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&wifi_config));
-  
-  ESP_ERROR_CHECK(esp_wifi_start());
+    (void)WIFI_PASW;
 
-  Wait_Wifi_Connected();
+    if (!s_wifi_manager_started) {
+        Wifi_Init();
+    }
+
+    if (WIFI_SSID != NULL && WIFI_SSID[0] != '\0') {
+        ESP_LOGW(TAG, "Direct SSID connection is deprecated; configure WiFi through AP WebUI");
+    }
+
+    Wait_Wifi_Connected();
 }
-

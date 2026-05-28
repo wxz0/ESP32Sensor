@@ -12,6 +12,7 @@
 #include "PressureSensor.h"
 #include "App_Data.h"
 #include "Mqtt_Connect.h"
+#include "Wifi_Connect.h"
 #include "Json_Utils.h"
 #include "KEY.h"
 #include "Timestamp.h"
@@ -25,7 +26,7 @@
 #define MQTT_PRESSURE1_DATA_PUBLISH_TOPIC "sensors/pressure1"
 #define MQTT_PRESSURE2_DATA_PUBLISH_TOPIC "sensors/pressure2"
 
-#define NORMAL_TASK_STACK_SIZE 4096
+#define NORMAL_TASK_STACK_SIZE 3072
 #define KEY_TASK_STACK_SIZE 2048
 
 #define SENSOR_TASK_PRIORITY 5
@@ -297,9 +298,9 @@ static void Calib_Task(void *pvParameters)
     }
 
     if (ret != ESP_OK) {
-        lcd_update_calibration_status(names[cmd], 0, 40, "Calibration failed");
+        lcd_update_calibration_status(names[cmd], 0, 40, "校准失败");
     } else {
-        lcd_update_calibration_status(names[cmd], 0, 40, "Calibration complete");
+        lcd_update_calibration_status(names[cmd], 0, 40, "校准完成");
     }
     vTaskDelay(pdMS_TO_TICKS(800));
     s_calib_running = false;
@@ -322,6 +323,12 @@ static void LCD_Task(void *pvParameters)
     bool showing_main = true;
     TickType_t last_screen_switch_tick = xTaskGetTickCount();
     const TickType_t screen_switch_interval = pdMS_TO_TICKS(30000);
+
+    if (!LCD_Driver_IsReady()) {
+        ESP_LOGW(TAG, "LCD 驱动未准备好，LCD 任务无法启动");
+        LCD_Task_Handle = NULL;
+        vTaskDelete(NULL);
+    }
 
     lcd_switch_to_main();
 
@@ -401,6 +408,12 @@ static void Upload_Data_Task(void *pvParameters)
     char *Json_Data = NULL;
     while (1)
     {
+        if (!Wifi_IS_Connected())
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         if (Mqtt_Is_Connectecd())
         {
             if (xQueueReceive(Mqtt_Data_Queue, &msg, pdMS_TO_TICKS(50)) == pdTRUE)
@@ -459,6 +472,34 @@ static void Upload_Data_Task(void *pvParameters)
     }
 }
 
+void App_Start_Upload_Task(void)
+{
+    if (Upload_Data_Task_Handle != NULL) {
+        return;
+    }
+
+    if (Mqtt_Data_Queue == NULL) {
+        ESP_LOGW(TAG, "MQTT数据队列未创建，无法启动上传任务");
+        return;
+    }
+
+    xTaskCreatePinnedToCore((TaskFunction_t)&Upload_Data_Task,
+                            (const char * const)"Upload_Data_Task",
+                            (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+                            (void * const)NULL,
+                            (UBaseType_t)UPLOAD_TASK_PRIORITY,
+                            (TaskHandle_t * const)&Upload_Data_Task_Handle,
+                            (const BaseType_t)0);
+    if (Upload_Data_Task_Handle != NULL)
+    {
+        ESP_LOGI(TAG, "上传任务创建成功");
+    }
+    else
+    {
+        ESP_LOGE(TAG, "上传任务创建失败");
+    }
+}
+
 void App_Create_Task(void)
 {
     Ui_Data_Queue = xQueueCreate(SENSOR_QUEUE_LENGTH, sizeof(SensorMessage_t));
@@ -479,14 +520,14 @@ void App_Create_Task(void)
     s_pressure_queues[1] = Mqtt_Data_Queue;
     KEY_Init();
 
-    // if (PressureSensor_RegisterDataCallback(PressureSensor_Data_Callback, s_pressure_queues) == ESP_OK)
-    // {
-    //     ESP_LOGI(TAG, "压力传感器回调注册成功");
-    // }
-    // else
-    // {
-    //     ESP_LOGE(TAG, "压力传感器回调注册失败");
-    // }
+    if (PressureSensor_RegisterDataCallback(PressureSensor_Data_Callback, s_pressure_queues) == ESP_OK)
+    {
+        ESP_LOGI(TAG, "压力传感器回调注册成功");
+    }
+    else
+    {
+        ESP_LOGE(TAG, "压力传感器回调注册失败");
+    }
 
     xTaskCreatePinnedToCore((TaskFunction_t)&WaterQuality_Sensor_Task,
                             (const char * const)"Sensor_Task",
@@ -504,21 +545,21 @@ void App_Create_Task(void)
         ESP_LOGI(TAG, "水质传感器任务创建失败");
     }
 
-    // xTaskCreatePinnedToCore((TaskFunction_t)&LightSensor_Task,
-    //                         (const char * const)"Light_Task",
-    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-    //                         (void * const)NULL,
-    //                         (UBaseType_t)SENSOR_TASK_PRIORITY,
-    //                         (TaskHandle_t * const)&Light_Sensor_Task_Handle,
-    //                         (const BaseType_t)1);
-    // if (Light_Sensor_Task_Handle != NULL)
-    // {
-    //     ESP_LOGI(TAG, "光强传感器任务创建成功");
-    // }
-    // else
-    // {
-    //     ESP_LOGI(TAG, "光强传感器任务创建失败");
-    // }
+    xTaskCreatePinnedToCore((TaskFunction_t)&LightSensor_Task,
+                            (const char * const)"Light_Task",
+                            (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+                            (void * const)NULL,
+                            (UBaseType_t)SENSOR_TASK_PRIORITY,
+                            (TaskHandle_t * const)&Light_Sensor_Task_Handle,
+                            (const BaseType_t)1);
+    if (Light_Sensor_Task_Handle != NULL)
+    {
+        ESP_LOGI(TAG, "光强传感器任务创建成功");
+    }
+    else
+    {
+        ESP_LOGI(TAG, "光强传感器任务创建失败");
+    }
 
     xTaskCreatePinnedToCore((TaskFunction_t)&Key_Task,
                             (const char * const)"Key_Task",
@@ -536,35 +577,28 @@ void App_Create_Task(void)
         ESP_LOGI(TAG, "按键任务创建失败");
     }
 
-    xTaskCreatePinnedToCore((TaskFunction_t)&LCD_Task,
-                            (const char * const)"LCD_Task",
-                            (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-                            (void * const)NULL,
-                            (UBaseType_t)LCD_TASK_PRIORITY,
-                            (TaskHandle_t * const)&LCD_Task_Handle,
-                            (const BaseType_t)0);
-    if (LCD_Task_Handle != NULL)
+    if (LCD_Driver_IsReady())
     {
-        ESP_LOGI(TAG, "LCD任务创建成功");
+        xTaskCreatePinnedToCore((TaskFunction_t)&LCD_Task,
+                                (const char * const)"LCD_Task",
+                                (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
+                                (void * const)NULL,
+                                (UBaseType_t)LCD_TASK_PRIORITY,
+                                (TaskHandle_t * const)&LCD_Task_Handle,
+                                (const BaseType_t)0);
+        if (LCD_Task_Handle != NULL)
+        {
+            ESP_LOGI(TAG, "LCD任务创建成功");
+        }
+        else
+        {
+            ESP_LOGI(TAG, "LCD任务创建失败");
+        }
     }
     else
     {
-        ESP_LOGI(TAG, "LCD任务创建失败");
+        ESP_LOGW(TAG, "LCD未就绪，跳过LCD任务");
     }
 
-    // xTaskCreatePinnedToCore((TaskFunction_t)&Upload_Data_Task,
-    //                         (const char * const)"Upload_Data_Task",
-    //                         (const configSTACK_DEPTH_TYPE)NORMAL_TASK_STACK_SIZE,
-    //                         (void * const)NULL,
-    //                         (UBaseType_t)UPLOAD_TASK_PRIORITY,
-    //                         (TaskHandle_t * const)&Upload_Data_Task_Handle,
-    //                         (const BaseType_t)0);
-    // if (Upload_Data_Task_Handle != NULL)
-    // {
-    //     ESP_LOGI(TAG, "上报数据任务创建成功");
-    // }
-    // else
-    // {
-    //     ESP_LOGI(TAG, "上报数据任务创建失败");
-    // }
+    ESP_LOGI(TAG, "上报任务将在网络就绪后启动");
 }

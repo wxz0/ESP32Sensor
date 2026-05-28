@@ -212,19 +212,19 @@ const mb_parameter_descriptor_t device_parameters[] = {
             0x1C,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ },
-    { CID_LIGHT_1, STR("Light1/Lux"), STR(""), MB_Light_DEVICE_ADDR1, MB_PARAM_INPUT,
+    { CID_LIGHT_1, STR("Light1/Lux"), STR(""), MB_Light_DEVICE_ADDR1, MB_PARAM_HOLDING,
             0x00,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ },
-    { CID_LIGHT_2, STR("Light2/Lux"), STR(""), MB_Light_DEVICE_ADDR2,     MB_PARAM_INPUT,
+    { CID_LIGHT_2, STR("Light2/Lux"), STR(""), MB_Light_DEVICE_ADDR2, MB_PARAM_HOLDING,
             0x00,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ },   
-    { CID_LIGHT_3, STR("Light3/Lux"), STR(""), MB_Light_DEVICE_ADDR3, MB_PARAM_INPUT,
+    { CID_LIGHT_3, STR("Light3/Lux"), STR(""), MB_Light_DEVICE_ADDR3, MB_PARAM_HOLDING,
             0x00,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ },   
-    { CID_LIGHT_4, STR("Light4/Lux"), STR(""), MB_Light_DEVICE_ADDR4, MB_PARAM_INPUT,
+    { CID_LIGHT_4, STR("Light4/Lux"), STR(""), MB_Light_DEVICE_ADDR4, MB_PARAM_HOLDING,
             0x00,1,
             0, PARAM_TYPE_U16, 2,
             OPTS(0,0, 0 ), PAR_PERMS_READ }                                       
@@ -326,7 +326,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read temperature");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 2. PH (原始值 / 100)
     if (read_param_u16(CID_PH, &raw_u16) == ESP_OK) 
     {
@@ -337,7 +337,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read pH");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 3. TDS (32位，直接值)
     if (read_param_u32(CID_TDS, &raw_u32) == ESP_OK) 
     {
@@ -348,7 +348,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read TDS");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 4. ORP (16位，直接值，转有符号)
     if (read_param_u16(CID_ORP, &raw_u16) == ESP_OK) 
     {
@@ -359,7 +359,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read ORP");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 5. 盐度% (原始值 / 100)
     if (read_param_u16(CID_SALT_PCT, &raw_u16) == ESP_OK) 
     {
@@ -370,7 +370,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read Salinity %%");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 6. 盐度PPT (原始值 / 10) - 注意这里是除以10
     if (read_param_u16(CID_SALT_PPT, &raw_u16) == ESP_OK) 
     {
@@ -381,7 +381,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read Salinity PPT");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 7. 比重 SG (原始值 / 1000)
     if (read_param_u16(CID_SG, &raw_u16) == ESP_OK) 
     {
@@ -392,7 +392,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read Specific Gravity");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 8. 电导率 EC (32位，直接值)
     if (read_param_u32(CID_EC, &raw_u32) == ESP_OK) 
     {
@@ -403,7 +403,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read EC");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     // 9. 余氯 (原始值 / 100)
     if (read_param_u16(CID_CL, &raw_u16) == ESP_OK) 
     {
@@ -414,7 +414,7 @@ esp_err_t water_sensor_read_all(WaterQualityData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read Chlorine");
     }
-
+    
     if (err != ESP_OK) 
     {
         ESP_LOGI(TAG, "Part of sensor data read failed");
@@ -445,7 +445,7 @@ esp_err_t light_sensor_read_all(LightSensorData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read light1");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (read_param_u16(CID_LIGHT_2, &raw_u16) == ESP_OK) 
     {
         out_data->lux_2 = (float)raw_u16;
@@ -455,7 +455,7 @@ esp_err_t light_sensor_read_all(LightSensorData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read light2");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (read_param_u16(CID_LIGHT_3, &raw_u16) == ESP_OK) 
     {
         out_data->lux_3 = (float)raw_u16;
@@ -465,7 +465,7 @@ esp_err_t light_sensor_read_all(LightSensorData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read light3");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (read_param_u16(CID_LIGHT_4, &raw_u16) == ESP_OK) 
     {
         out_data->lux_4 = (float)raw_u16;
@@ -475,7 +475,7 @@ esp_err_t light_sensor_read_all(LightSensorData_t *out_data)
         err = ESP_FAIL;
         ESP_LOGI(TAG, "Failed to read light4");
     }
-
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (err != ESP_OK)
     {
         ESP_LOGI(TAG, "Part of light sensor data read failed");

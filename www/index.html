@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>多路传感器 WiFi 配网</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef3f7;
+      --tile: #ffffff;
+      --line: #d7e0e8;
+      --text: #101820;
+      --muted: #52616f;
+      --blue: #2f80ed;
+      --teal: #00a8a8;
+      --green: #27ae60;
+      --orange: #f2994a;
+      --red: #eb5757;
+      --purple: #9b51e0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    main {
+      width: min(640px, 100%);
+      margin: 0 auto;
+      padding: 12px;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: stretch;
+      margin-bottom: 8px;
+    }
+
+    .tile {
+      position: relative;
+      overflow: hidden;
+      background: var(--tile);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      min-width: 0;
+    }
+
+    .tile::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 5px;
+      background: var(--accent, var(--blue));
+    }
+
+    .head {
+      padding: 10px 12px 10px 16px;
+    }
+
+    h1, h2, p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    h2 {
+      padding: 10px 12px 0 16px;
+      color: var(--accent, var(--blue));
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .sub {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status {
+      display: grid;
+      align-content: center;
+      min-width: 104px;
+      padding: 8px 12px 8px 16px;
+      color: var(--muted);
+      font-weight: 700;
+      text-align: center;
+      --accent: var(--orange);
+    }
+
+    .status.connected { --accent: var(--green); color: var(--green); }
+    .status.connecting { --accent: var(--orange); color: var(--orange); }
+    .status.disconnected { --accent: var(--red); color: var(--red); }
+
+    .grid {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .section {
+      padding-bottom: 12px;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding-right: 12px;
+    }
+
+    button {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    button:focus-visible,
+    input:focus-visible {
+      outline: 3px solid rgba(47, 128, 237, .28);
+      outline-offset: 2px;
+    }
+
+    button:disabled {
+      opacity: .58;
+      cursor: not-allowed;
+    }
+
+    .scan-btn {
+      width: 86px;
+      min-height: 38px;
+      color: var(--blue);
+    }
+
+    .primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .networks {
+      display: grid;
+      gap: 6px;
+      padding: 10px 12px 0;
+    }
+
+    .network {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      min-height: 58px;
+      padding: 8px 10px 8px 14px;
+      text-align: left;
+      border-left: 5px solid var(--blue);
+    }
+
+    .network.selected {
+      background: #edf5ff;
+      border-color: var(--teal);
+    }
+
+    .ssid {
+      display: block;
+      color: var(--text);
+      font-size: 17px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    form {
+      display: grid;
+      gap: 10px;
+      padding: 10px 12px 0 16px;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 9px 10px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .message {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .message.error { color: var(--red); }
+    .message.ok { color: var(--green); }
+
+    @media (max-width: 520px) {
+      main { padding: 8px; }
+      .top,
+      .section-head,
+      .network {
+        grid-template-columns: 1fr;
+      }
+      .status {
+        min-height: 48px;
+        text-align: left;
+      }
+      .scan-btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top">
+      <section class="tile head" style="--accent: var(--blue)">
+        <h1>多路传感器</h1>
+        <p class="sub">WiFi 配网</p>
+      </section>
+      <div id="state" class="tile status">读取中</div>
+    </div>
+
+    <section class="tile section" style="--accent: var(--teal)">
+      <div class="section-head">
+        <h2>附近网络</h2>
+        <button id="scan" class="scan-btn" type="button">扫描</button>
+      </div>
+      <div id="networks" class="networks"></div>
+    </section>
+
+    <section class="tile section" style="--accent: var(--purple)">
+      <h2>连接信息</h2>
+      <form id="wifi-form">
+        <label for="ssid">
+          网络名称
+          <input id="ssid" name="ssid" maxlength="31" autocomplete="off" required>
+        </label>
+        <label for="password">
+          网络密码
+          <input id="password" name="password" type="password" maxlength="63" autocomplete="current-password">
+        </label>
+        <button id="connect" class="primary" type="submit">保存并连接</button>
+        <div id="message" class="message" aria-live="polite"></div>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    const api = "/api/wifi";
+    const stateEl = document.getElementById("state");
+    const networksEl = document.getElementById("networks");
+    const scanBtn = document.getElementById("scan");
+    const form = document.getElementById("wifi-form");
+    const ssidInput = document.getElementById("ssid");
+    const passInput = document.getElementById("password");
+    const msgEl = document.getElementById("message");
+    const connectBtn = document.getElementById("connect");
+
+    function message(text, kind) {
+      msgEl.textContent = text || "";
+      msgEl.className = "message" + (kind ? " " + kind : "");
+    }
+
+    async function request(path, options) {
+      const res = await fetch(api + path, options);
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const body = await res.json();
+          detail = body.error || body.message || "";
+        } catch (_) {}
+        throw new Error(detail || ("HTTP " + res.status));
+      }
+      const type = res.headers.get("content-type") || "";
+      return type.includes("application/json") ? res.json() : null;
+    }
+
+    function renderStatus(status) {
+      const state = status && status.state ? status.state : "disconnected";
+      stateEl.textContent = state === "connected" ? "已连接" :
+        state === "connecting" ? "连接中" : "配网模式";
+      stateEl.className = "tile status " + state;
+      if (state === "connected" && status.ssid) {
+        message("已连接：" + status.ssid + "，IP：" + status.ip, "ok");
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        renderStatus(await request("/status"));
+      } catch (err) {
+        stateEl.textContent = "离线";
+        stateEl.className = "tile status disconnected";
+      }
+    }
+
+    function authText(auth) {
+      return auth && auth !== "OPEN" ? auth : "开放网络";
+    }
+
+    function renderNetworks(networks) {
+      networksEl.innerHTML = "";
+      if (!networks.length) {
+        networksEl.innerHTML = '<div class="meta">未发现可用网络</div>';
+        return;
+      }
+      networks.forEach((net) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "network";
+        item.innerHTML =
+          '<span><span class="ssid"></span><span class="meta auth"></span></span>' +
+          '<span class="meta rssi"></span>';
+        item.querySelector(".ssid").textContent = net.ssid || "隐藏网络";
+        item.querySelector(".auth").textContent = authText(net.auth);
+        item.querySelector(".rssi").textContent = (net.rssi || 0) + " dBm";
+        item.addEventListener("click", () => {
+          document.querySelectorAll(".network").forEach((el) => el.classList.remove("selected"));
+          item.classList.add("selected");
+          ssidInput.value = net.ssid || "";
+          passInput.focus();
+        });
+        networksEl.appendChild(item);
+      });
+    }
+
+    async function scanNetworks() {
+      scanBtn.disabled = true;
+      networksEl.innerHTML = '<div class="meta">正在扫描...</div>';
+      try {
+        const data = await request("/scan");
+        renderNetworks((data.networks || []).filter((net) => net.ssid));
+      } catch (err) {
+        networksEl.innerHTML = '<div class="meta">扫描失败：' + err.message + '</div>';
+      } finally {
+        scanBtn.disabled = false;
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const ssid = ssidInput.value.trim();
+      if (!ssid) {
+        message("请输入网络名称", "error");
+        return;
+      }
+      connectBtn.disabled = true;
+      message("正在保存并连接...");
+      try {
+        await request("/networks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ssid, password: passInput.value, priority: 10 })
+        });
+      } catch (err) {
+        if (!String(err.message).includes("Already exists")) {
+          connectBtn.disabled = false;
+          message("保存失败：" + err.message, "error");
+          return;
+        }
+        await request("/networks/" + encodeURIComponent(ssid), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: passInput.value, priority: 10 })
+        });
+      }
+      try {
+        await request("/connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ssid })
+        });
+        message("正在连接，连接成功后配网热点会自动关闭", "ok");
+        setTimeout(refreshStatus, 2500);
+      } catch (err) {
+        message("连接失败：" + err.message, "error");
+      } finally {
+        connectBtn.disabled = false;
+      }
+    });
+
+    scanBtn.addEventListener("click", scanNetworks);
+    refreshStatus();
+    scanNetworks();
+    setInterval(refreshStatus, 5000);
+  </script>
+</body>
+</html>
